@@ -24,7 +24,7 @@ async function goFullscreen(){
 fsBtn.addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();goFullscreen()});
 document.addEventListener('fullscreenchange',()=>{fsBtn.textContent=document.fullscreenElement?'⛶ 종료':'⛶ 전체화면';resizeGame()});try{const p=JSON.parse(localStorage.getItem('blockcraft-player'));if(p){inventory={...inventory,...p.inventory};health=p.health??10;hunger=p.hunger??10;dayTime=p.dayTime??.22}}catch(e){}
 const bar=document.getElementById('bar');types.forEach((t,i)=>{const e=document.createElement('div');e.className='slot'+(i===0?' sel':'');e.innerHTML=`<span>${t}</span><span class='count' id='n-${t}'>${inventory[t]||0}</span>`;e.style.background='#'+colors[t].toString(16).padStart(6,'0');e.onclick=()=>{selected=t;[...bar.children].forEach(x=>x.classList.remove('sel'));e.classList.add('sel')};bar.append(e)});
-let yaw=0,pitch=-.25,vy=0,onGround=false,jumpQueued=false;const keys={};addEventListener('keydown',e=>{keys[e.code]=true;if(e.code.startsWith('Digit'))bar.children[+e.code.at(-1)-1]?.click()});addEventListener('keyup',e=>keys[e.code]=false);addEventListener('blur',()=>{keys.Space=false;jumpQueued=false});document.addEventListener('visibilitychange',()=>{if(document.hidden){keys.Space=false;jumpQueued=false}});renderer.domElement.addEventListener('click',()=>{if(innerWidth>800)renderer.domElement.requestPointerLock()});addEventListener('mousemove',e=>{if(document.pointerLockElement===renderer.domElement){yaw-=e.movementX*.0025;pitch=Math.max(-1.45,Math.min(1.45,pitch-e.movementY*.0025))}});addEventListener('contextmenu',e=>e.preventDefault());
+let yaw=0,pitch=-.25,vy=0,onGround=false,jumpQueued=false;const keys={};addEventListener('keydown',e=>{keys[e.code]=true;if(e.code.startsWith('Digit'))bar.children[+e.code.at(-1)-1]?.click()});addEventListener('keyup',e=>keys[e.code]=false);addEventListener('blur',()=>{keys.Space=false;jumpQueued=false});document.addEventListener('visibilitychange',()=>{if(document.hidden){keys.Space=false;jumpQueued=false}});renderer.domElement.addEventListener('click',e=>{if(isTouchDevice){e.preventDefault();return}if(innerWidth>800)renderer.domElement.requestPointerLock()});addEventListener('mousemove',e=>{if(document.pointerLockElement===renderer.domElement){yaw-=e.movementX*.0025;pitch=Math.max(-1.45,Math.min(1.45,pitch-e.movementY*.0025))}});addEventListener('contextmenu',e=>e.preventDefault());
 const ray=new THREE.Raycaster();function refresh(){types.forEach(t=>{const n=document.getElementById('n-'+t);if(n)n.textContent=inventory[t]||0});document.getElementById('hp').textContent='❤ '+Math.ceil(health);document.getElementById('food').textContent='● '+Math.ceil(hunger)}refresh();function action(place){ray.setFromCamera(new THREE.Vector2(0,0),camera);const hits=ray.intersectObjects([...blocks.values()],false);if(!hits.length||hits[0].distance>7)return;const h=hits[0];if(place){if((inventory[selected]||0)<=0)return;const p=h.object.position.clone().add(h.face.normal);const bx=Math.round(p.x),by=Math.round(p.y),bz=Math.round(p.z);if(Math.abs(bx-camera.position.x)<.7&&Math.abs(bz-camera.position.z)<.7&&Math.abs(by-(camera.position.y-1))<1.8)return;add(bx,by,bz,selected);inventory[selected]--;refresh()}else if(h.object.position.y>-2){inventory[h.object.userData.t]=(inventory[h.object.userData.t]||0)+1;del(h.object);refresh()}}const isTouchDevice=matchMedia('(pointer:coarse)').matches||navigator.maxTouchPoints>0||('ontouchstart' in window);
 renderer.domElement.addEventListener('mousedown',e=>{
   if(isTouchDevice)return;
@@ -38,11 +38,15 @@ function bindAction(btn,fn){
   btn.addEventListener('pointercancel',e=>{e.preventDefault();e.stopPropagation();armed=false});
   btn.addEventListener('click',e=>{e.preventDefault();e.stopPropagation()});
 }
-bindAction(mineBtn,()=>action(false));bindAction(placeBtn,()=>action(true));bindAction(jumpBtn,()=>jumpQueued=true);
+bindAction(mineBtn,()=>action(false));bindAction(placeBtn,()=>action(true));
+jumpBtn.addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();jumpQueued=true});
+jumpBtn.addEventListener('pointerup',e=>{e.preventDefault();e.stopPropagation()});
+jumpBtn.addEventListener('pointercancel',e=>{e.preventDefault();e.stopPropagation()});
 let moveX=0,moveZ=0;
 let lookId=null,lastLookX=0,lastLookY=0;
 renderer.domElement.addEventListener('pointerdown',e=>{
-  if(e.pointerType==='touch'){
+  if(e.pointerType==='touch'||isTouchDevice){
+    e.preventDefault();
     lookId=e.pointerId; lastLookX=e.clientX; lastLookY=e.clientY;
     renderer.domElement.setPointerCapture?.(lookId);
   }
@@ -105,13 +109,6 @@ function obstacleHeightAhead(x,z){
   return Number.isFinite(top)?top-feet:0
 }
 function moveHorizontal(dx,dz){
-  // Walking into a one-block ledge triggers a small automatic jump; 2+ blocks stay solid.
-  if(onGround&&Math.hypot(dx,dz)>.0001){
-    const mag=Math.hypot(dx,dz),probe=.38;
-    const px=camera.position.x+dx/mag*probe,pz=camera.position.z+dz/mag*probe;
-    const h=obstacleHeightAhead(px,pz);
-    if(h>.08&&h<=1.05){vy=6.15;onGround=false;camera.position.y+=.04}
-  }
   const steps=Math.max(1,Math.ceil(Math.hypot(dx,dz)/.08));
   for(let s=0;s<steps;s++){
     const sx=dx/steps,sz=dz/steps;
@@ -142,5 +139,5 @@ if(onGround&&!overlappingBlock(camera.position.x,camera.position.z))lastSafe.cop
 if(overlappingBlock(camera.position.x,camera.position.z)){
   camera.position.copy(lastSafe);vy=0;onGround=false
 }
-if(camera.position.y<-8){camera.position.copy(lastSafe);camera.position.y+=1;vy=0;onGround=false}if((keys.Space||jumpQueued)&&onGround){vy=6.15;camera.position.y+=.05;jumpQueued=false}else if(jumpQueued&&!onGround){jumpQueued=false}renderer.render(scene,camera)}requestAnimationFrame(loop);function resizeGame(){const v=viewport();camera.aspect=v.w/v.h;camera.updateProjectionMatrix();renderer.setSize(v.w,v.h,false)}addEventListener('resize',resizeGame);window.visualViewport?.addEventListener('resize',resizeGame);window.visualViewport?.addEventListener('scroll',resizeGame);
+if(camera.position.y<-8){camera.position.copy(lastSafe);camera.position.y+=1;vy=0;onGround=false}if((keys.Space||jumpQueued)&&onGround){vy=6.15;camera.position.y+=.05;onGround=false}jumpQueued=falserenderer.render(scene,camera)}requestAnimationFrame(loop);function resizeGame(){const v=viewport();camera.aspect=v.w/v.h;camera.updateProjectionMatrix();renderer.setSize(v.w,v.h,false)}addEventListener('resize',resizeGame);window.visualViewport?.addEventListener('resize',resizeGame);window.visualViewport?.addEventListener('scroll',resizeGame);
 </script></body></html>
