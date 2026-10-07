@@ -11,7 +11,8 @@ const hemi=new THREE.HemisphereLight(0xffffff,0x665544,2.2);scene.add(hemi);cons
 const colors={grass:0x55aa44,dirt:0x8a5a32,stone:0x888888,wood:0x8b653f,leaf:0x3f8f3f,sand:0xd8c47a,coal:0x333333,iron:0xb68f76,gold:0xe8c547,crystal:0x42d9e8,plank:0xb88752,crafting:0x9a6336};let selected='grass';const types=Object.keys(colors);const blocks=new Map();const geo=new THREE.BoxGeometry(1,1,1);const key=(x,y,z)=>`${x},${y},${z}`;
 function add(x,y,z,t='grass',save=true){if(blocks.has(key(x,y,z)))return;const m=new THREE.Mesh(geo,new THREE.MeshLambertMaterial({color:colors[t]}));m.position.set(x,y,z);m.userData={x,y,z,t};scene.add(m);blocks.set(key(x,y,z),m);if(save)scheduleSave()}
 function del(m){const k=key(m.userData.x,m.userData.y,m.userData.z);scene.remove(m);blocks.delete(k);edits[k]=null;proceduralKeys.delete(k);scheduleSave()}
-const CHUNK=8,VIEW=2;const loadedChunks=new Set(),proceduralKeys=new Set();
+let edits={};try{edits=JSON.parse(localStorage.getItem('blockcraft-edits')||'{}')||{}}catch(e){edits={}}
+const CHUNK=8,VIEW=3;const loadedChunks=new Set(),proceduralKeys=new Set();
 let worldSeed=+(localStorage.getItem('blockcraft-seed')||Math.floor(Math.random()*9999999));localStorage.setItem('blockcraft-seed',worldSeed);
 function hash(x,z){let n=(x*374761393+z*668265263+worldSeed*69069)|0;n=(n^(n>>13))*1274126177;return ((n^(n>>16))>>>0)/4294967295}
 function heightAt(x,z){return Math.floor(2+Math.sin((x+worldSeed%97)*.12)*1.5+Math.cos((z-worldSeed%83)*.10)*1.3+Math.sin((x+z)*.045)*1.2)}
@@ -28,9 +29,9 @@ function ensureChunks(){
  for(let dx=-VIEW;dx<=VIEW;dx++)for(let dz=-VIEW;dz<=VIEW;dz++)genChunk(cx+dx,cz+dz);
  for(const ck of [...loadedChunks]){const [x,z]=ck.split(',').map(Number);if(Math.abs(x-cx)>VIEW+1||Math.abs(z-cz)>VIEW+1){loadedChunks.delete(ck);for(const [k,m] of [...blocks])if(proceduralKeys.has(k)&&Math.floor(m.position.x/CHUNK)===x&&Math.floor(m.position.z/CHUNK)===z){scene.remove(m);blocks.delete(k);proceduralKeys.delete(k)}}}
 }
-ensureChunks();
+ensureChunks();const spawnH=heightAt(0,8);camera.position.set(0,spawnH+2.2,8);
 const saved=localStorage.getItem('blockcraft-world');if(saved){try{JSON.parse(saved).forEach(b=>{const k=key(b.x,b.y,b.z);if(blocks.has(k)){scene.remove(blocks.get(k));blocks.delete(k)}add(b.x,b.y,b.z,b.t,false)})}catch(e){}}
-let edits=JSON.parse(localStorage.getItem('blockcraft-edits')||'{}');let inventory={};types.forEach(t=>inventory[t]=0);inventory.grass=12;inventory.dirt=12;inventory.stone=8;inventory.stick=0;inventory.woodPickaxe=0;inventory.stonePickaxe=0;let health=10,hunger=10,dayTime=.22;let st;function scheduleSave(){clearTimeout(st);st=setTimeout(save,300)}function save(){localStorage.setItem('blockcraft-edits',JSON.stringify(edits));localStorage.setItem('blockcraft-player',JSON.stringify({inventory,health,hunger,dayTime}))}document.getElementById('save').onclick=save;
+let inventory={};types.forEach(t=>inventory[t]=0);inventory.grass=12;inventory.dirt=12;inventory.stone=8;inventory.stick=0;inventory.woodPickaxe=0;inventory.stonePickaxe=0;let health=10,hunger=10,dayTime=.22;let st;function scheduleSave(){clearTimeout(st);st=setTimeout(save,300)}function save(){localStorage.setItem('blockcraft-edits',JSON.stringify(edits));localStorage.setItem('blockcraft-player',JSON.stringify({inventory,health,hunger,dayTime}))}document.getElementById('save').onclick=save;
 const fsBtn=document.getElementById('fullscreen');
 async function goFullscreen(){
   try{
@@ -172,5 +173,8 @@ if(onGround&&!overlappingBlock(camera.position.x,camera.position.z))lastSafe.cop
 if(overlappingBlock(camera.position.x,camera.position.z)){
   camera.position.copy(lastSafe);vy=0;onGround=false
 }
-if(camera.position.y<-8){camera.position.copy(lastSafe);camera.position.y+=1;vy=0;onGround=false}if((keys.Space||jumpQueued)&&onGround){vy=6.15;camera.position.y+=.05;onGround=false}jumpQueued=falserenderer.render(scene,camera)}requestAnimationFrame(loop);function resizeGame(){const v=viewport();camera.aspect=v.w/v.h;camera.updateProjectionMatrix();renderer.setSize(v.w,v.h,false)}addEventListener('resize',resizeGame);window.visualViewport?.addEventListener('resize',resizeGame);window.visualViewport?.addEventListener('scroll',resizeGame);
+if(camera.position.y<-8){
+ const sx=Math.round(lastSafe.x),sz=Math.round(lastSafe.z),sh=heightAt(sx,sz);
+ camera.position.set(sx,sh+2.2,sz);vy=0;onGround=false
+}if((keys.Space||jumpQueued)&&onGround){vy=6.15;camera.position.y+=.05;onGround=false}jumpQueued=falserenderer.render(scene,camera)}requestAnimationFrame(loop);function resizeGame(){const v=viewport();camera.aspect=v.w/v.h;camera.updateProjectionMatrix();renderer.setSize(v.w,v.h,false)}addEventListener('resize',resizeGame);window.visualViewport?.addEventListener('resize',resizeGame);window.visualViewport?.addEventListener('scroll',resizeGame);
 </script></body></html>
