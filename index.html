@@ -44,13 +44,18 @@ function genChunk(cx,cz){
  }
  loadedChunks.add(ck)
 }
+const chunkQueue=[];
 function ensureChunks(){
  const cx=Math.floor(camera.position.x/CHUNK),cz=Math.floor(camera.position.z/CHUNK);
- for(let dx=-VIEW;dx<=VIEW;dx++)for(let dz=-VIEW;dz<=VIEW;dz++)genChunk(cx+dx,cz+dz)
+ for(let dx=-VIEW;dx<=VIEW;dx++)for(let dz=-VIEW;dz<=VIEW;dz++){
+   const x=cx+dx,z=cz+dz,ck=x+','+z;
+   if(!loadedChunks.has(ck)&&!chunkQueue.some(q=>q[0]===x&&q[1]===z))chunkQueue.push([x,z])
+ }
 }
+function processChunkQueue(){if(chunkQueue.length){const [x,z]=chunkQueue.shift();genChunk(x,z)}}
 // Generate first, then put the camera exactly at eye height above the terrain.
 camera.position.set(0,8,8);
-ensureChunks();
+ensureChunks();while(chunkQueue.length)processChunkQueue();
 const spawnX=0,spawnZ=8,spawnTop=heightAt(spawnX,spawnZ)+.5;
 camera.position.set(spawnX,spawnTop+1.65,spawnZ);
 let inventory={};types.forEach(t=>inventory[t]=0);inventory.grass=12;inventory.dirt=12;inventory.stone=8;inventory.stick=0;inventory.woodPickaxe=0;inventory.stonePickaxe=0;let health=10,hunger=10,dayTime=.22;let st;function scheduleSave(){clearTimeout(st);st=setTimeout(save,300)}function save(){localStorage.setItem('blockcraft-edits',JSON.stringify(edits));localStorage.setItem('blockcraft-player',JSON.stringify({inventory,health,hunger,dayTime}))}document.getElementById('save').onclick=save;
@@ -120,40 +125,30 @@ renderer.domElement.addEventListener('pointerup',stopLook);
 renderer.domElement.addEventListener('pointercancel',stopLook);
 function joy(el,cb){let id=null,sx=0,sy=0;el.addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();id=e.pointerId;sx=e.clientX;sy=e.clientY;el.setPointerCapture(id)});el.addEventListener('pointermove',e=>{if(e.pointerId!==id)return;e.preventDefault();e.stopPropagation();cb((e.clientX-sx)/45,(e.clientY-sy)/45)});el.addEventListener('pointerup',e=>{e.preventDefault();e.stopPropagation();id=null;cb(0,0)})}joy(document.getElementById('jl'),(x,y)=>{moveX=Math.max(-1,Math.min(1,x));moveZ=Math.max(-1,Math.min(1,y))});
 function groundY(x,z){
-  const footY=camera.position.y-1.65;
+  const footY=camera.position.y-1.65,r=.27;
   let best=-Infinity;
-  const radius=.28;
-  for(const m of blocks.values()){
-    const top=m.position.y+.5;
-    // Only support blocks whose top is at/below the player's feet (+ tiny tolerance).
-    if(top>footY+.12)continue;
-    if(Math.abs(m.position.x-x)<=.5+radius&&Math.abs(m.position.z-z)<=.5+radius){
-      best=Math.max(best,m.position.y);
-    }
+  const minX=Math.floor(x-r-.5),maxX=Math.ceil(x+r+.5);
+  const minZ=Math.floor(z-r-.5),maxZ=Math.ceil(z+r+.5);
+  const topY=Math.floor(footY+.12-.5);
+  for(let bx=minX;bx<=maxX;bx++)for(let bz=minZ;bz<=maxZ;bz++){
+    if(x+r<=bx-.5||x-r>=bx+.5||z+r<=bz-.5||z-r>=bz+.5)continue;
+    for(let by=topY;by>=topY-3;by--)if(blocks.has(key(bx,by,bz))){best=Math.max(best,by);break}
   }
   return Number.isFinite(best)?best+.5:null
 }
 function solidAt(x,y,z){return blocks.has(key(Math.round(x),Math.round(y),Math.round(z)))}
 function bodyBlocked(x,z){
-  const feet=camera.position.y-1.65;
-  const r=.31;
-  const minY=feet+.08,maxY=feet+1.72;
-  for(const m of blocks.values()){
-    const bx=m.position.x,bz=m.position.z,by=m.position.y;
-    if(Math.abs(bx-x)>.5+r||Math.abs(bz-z)>.5+r)continue;
-    const blockBottom=by-.5,blockTop=by+.5;
-    if(blockTop>minY&&blockBottom<maxY)return true;
-  }
-  return false
-}
-function overlappingBlock(x,z){
   const feet=camera.position.y-1.65,r=.29;
-  for(const m of blocks.values()){
-    if(Math.abs(m.position.x-x)>.5+r||Math.abs(m.position.z-z)>.5+r)continue;
-    if(m.position.y+.5>feet+.06&&m.position.y-.5<feet+1.70)return true;
+  const minX=Math.floor(x-r-.5),maxX=Math.ceil(x+r+.5);
+  const minZ=Math.floor(z-r-.5),maxZ=Math.ceil(z+r+.5);
+  const minY=Math.floor(feet+.08-.5),maxY=Math.ceil(feet+1.72+.5);
+  for(let bx=minX;bx<=maxX;bx++)for(let bz=minZ;bz<=maxZ;bz++)for(let by=minY;by<=maxY;by++){
+    if(!blocks.has(key(bx,by,bz)))continue;
+    if(x+r>bx-.5&&x-r<bx+.5&&z+r>bz-.5&&z-r<bz+.5&&feet+1.72>by-.5&&feet+.08<by+.5)return true;
   }
   return false
 }
+function overlappingBlock(x,z){return bodyBlocked(x,z)}
 function obstacleHeightAhead(x,z){
   const feet=camera.position.y-1.65,r=.30;
   let top=-Infinity;
@@ -172,7 +167,7 @@ function moveHorizontal(dx,dz){
     if(!bodyBlocked(camera.position.x,camera.position.z+sz))camera.position.z+=sz;
   }
 }
-let lastSafe=camera.position.clone(),chunkTick=0;let last=performance.now(),survivalTick=0;function loop(now){requestAnimationFrame(loop);const dt=Math.min(.04,(now-last)/1000);last=now;dayTime=(dayTime+dt/180)%1;const ang=dayTime*Math.PI*2;sun.position.set(Math.cos(ang)*20,Math.sin(ang)*25,8);const sunHeight=Math.sin(ang);const daylight=THREE.MathUtils.clamp((sunHeight+.18)/.72,0,1);sun.intensity=.03+daylight*2.35;hemi.intensity=.12+daylight*2.05;moon.intensity=(1-daylight)*.32;moon.position.set(-Math.cos(ang)*20,-Math.sin(ang)*25,-8);const night=new THREE.Color(0x071126),dawn=new THREE.Color(0x9b6570),day=new THREE.Color(0x78bfea);let sky=night.clone().lerp(dawn,Math.min(1,daylight*2));if(daylight>.5)sky.lerp(day,(daylight-.5)*2);scene.background.copy(sky);scene.fog.color.copy(sky);renderer.toneMappingExposure=.45+daylight*.75;document.getElementById('clock').textContent=daylight>.55?'☀ 낮':daylight>.15?'◐ 황혼':'☾ 밤';chunkTick+=dt;if(chunkTick>.8){chunkTick=0;ensureChunks()}survivalTick+=dt;if(survivalTick>18){survivalTick=0;hunger=Math.max(0,hunger-.25);if(hunger<=0)health=Math.max(1,health-.5);refresh();scheduleSave()}camera.rotation.order='YXZ';camera.rotation.y=yaw;camera.rotation.x=pitch;let f=(keys.KeyW?1:0)-(keys.KeyS?1:0)-moveZ,r=(keys.KeyD?1:0)-(keys.KeyA?1:0)+moveX;const len=Math.hypot(f,r)||1;f/=len;r/=len;const speed=5;const forwardX=-Math.sin(yaw),forwardZ=-Math.cos(yaw),rightX=Math.cos(yaw),rightZ=-Math.sin(yaw);const dx=(forwardX*f+rightX*r)*speed*dt,dz=(forwardZ*f+rightZ*r)*speed*dt;
+let lastSafe=camera.position.clone(),chunkTick=0;let last=performance.now(),survivalTick=0;function loop(now){requestAnimationFrame(loop);const dt=Math.min(.04,(now-last)/1000);last=now;dayTime=(dayTime+dt/180)%1;const ang=dayTime*Math.PI*2;sun.position.set(Math.cos(ang)*20,Math.sin(ang)*25,8);const sunHeight=Math.sin(ang);const daylight=THREE.MathUtils.clamp((sunHeight+.18)/.72,0,1);sun.intensity=.03+daylight*2.35;hemi.intensity=.12+daylight*2.05;moon.intensity=(1-daylight)*.32;moon.position.set(-Math.cos(ang)*20,-Math.sin(ang)*25,-8);const night=new THREE.Color(0x071126),dawn=new THREE.Color(0x9b6570),day=new THREE.Color(0x78bfea);let sky=night.clone().lerp(dawn,Math.min(1,daylight*2));if(daylight>.5)sky.lerp(day,(daylight-.5)*2);scene.background.copy(sky);scene.fog.color.copy(sky);renderer.toneMappingExposure=.45+daylight*.75;document.getElementById('clock').textContent=daylight>.55?'☀ 낮':daylight>.15?'◐ 황혼':'☾ 밤';chunkTick+=dt;if(chunkTick>.18){chunkTick=0;ensureChunks();processChunkQueue()}survivalTick+=dt;if(survivalTick>18){survivalTick=0;hunger=Math.max(0,hunger-.25);if(hunger<=0)health=Math.max(1,health-.5);refresh();scheduleSave()}camera.rotation.order='YXZ';camera.rotation.y=yaw;camera.rotation.x=pitch;let f=(keys.KeyW?1:0)-(keys.KeyS?1:0)-moveZ,r=(keys.KeyD?1:0)-(keys.KeyA?1:0)+moveX;const len=Math.hypot(f,r)||1;f/=len;r/=len;const speed=5;const forwardX=-Math.sin(yaw),forwardZ=-Math.cos(yaw),rightX=Math.cos(yaw),rightZ=-Math.sin(yaw);const dx=(forwardX*f+rightX*r)*speed*dt,dz=(forwardZ*f+rightZ*r)*speed*dt;
 moveHorizontal(dx,dz)
 let base=groundY(camera.position.x,camera.position.z);
 if(base===null){
@@ -192,9 +187,6 @@ if(base!==null){
   vy-=18*dt;camera.position.y+=vy*dt;onGround=false
 }
 if(onGround&&!overlappingBlock(camera.position.x,camera.position.z))lastSafe.copy(camera.position);
-if(overlappingBlock(camera.position.x,camera.position.z)){
-  camera.position.copy(lastSafe);vy=0;onGround=false
-}
 if(camera.position.y<-8){
  const sh=heightAt(0,8)+.5;
  camera.position.set(0,sh+1.65,8);lastSafe.copy(camera.position);vy=0;onGround=false
