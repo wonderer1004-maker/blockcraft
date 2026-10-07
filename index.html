@@ -24,7 +24,7 @@ async function goFullscreen(){
 fsBtn.addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();goFullscreen()});
 document.addEventListener('fullscreenchange',()=>{fsBtn.textContent=document.fullscreenElement?'⛶ 종료':'⛶ 전체화면';resizeGame()});try{const p=JSON.parse(localStorage.getItem('blockcraft-player'));if(p){inventory={...inventory,...p.inventory};health=p.health??10;hunger=p.hunger??10;dayTime=p.dayTime??.22}}catch(e){}
 const bar=document.getElementById('bar');types.forEach((t,i)=>{const e=document.createElement('div');e.className='slot'+(i===0?' sel':'');e.innerHTML=`<span>${t}</span><span class='count' id='n-${t}'>${inventory[t]||0}</span>`;e.style.background='#'+colors[t].toString(16).padStart(6,'0');e.onclick=()=>{selected=t;[...bar.children].forEach(x=>x.classList.remove('sel'));e.classList.add('sel')};bar.append(e)});
-let yaw=0,pitch=-.25,vy=0,onGround=false,jumpQueued=false;const keys={};addEventListener('keydown',e=>{keys[e.code]=true;if(e.code.startsWith('Digit'))bar.children[+e.code.at(-1)-1]?.click()});addEventListener('keyup',e=>keys[e.code]=false);renderer.domElement.addEventListener('click',()=>{if(innerWidth>800)renderer.domElement.requestPointerLock()});addEventListener('mousemove',e=>{if(document.pointerLockElement===renderer.domElement){yaw-=e.movementX*.0025;pitch=Math.max(-1.45,Math.min(1.45,pitch-e.movementY*.0025))}});addEventListener('contextmenu',e=>e.preventDefault());
+let yaw=0,pitch=-.25,vy=0,onGround=false,jumpQueued=false;const keys={};addEventListener('keydown',e=>{keys[e.code]=true;if(e.code.startsWith('Digit'))bar.children[+e.code.at(-1)-1]?.click()});addEventListener('keyup',e=>keys[e.code]=false);addEventListener('blur',()=>{keys.Space=false;jumpQueued=false});document.addEventListener('visibilitychange',()=>{if(document.hidden){keys.Space=false;jumpQueued=false}});renderer.domElement.addEventListener('click',()=>{if(innerWidth>800)renderer.domElement.requestPointerLock()});addEventListener('mousemove',e=>{if(document.pointerLockElement===renderer.domElement){yaw-=e.movementX*.0025;pitch=Math.max(-1.45,Math.min(1.45,pitch-e.movementY*.0025))}});addEventListener('contextmenu',e=>e.preventDefault());
 const ray=new THREE.Raycaster();function refresh(){types.forEach(t=>{const n=document.getElementById('n-'+t);if(n)n.textContent=inventory[t]||0});document.getElementById('hp').textContent='❤ '+Math.ceil(health);document.getElementById('food').textContent='● '+Math.ceil(hunger)}refresh();function action(place){ray.setFromCamera(new THREE.Vector2(0,0),camera);const hits=ray.intersectObjects([...blocks.values()],false);if(!hits.length||hits[0].distance>7)return;const h=hits[0];if(place){if((inventory[selected]||0)<=0)return;const p=h.object.position.clone().add(h.face.normal);const bx=Math.round(p.x),by=Math.round(p.y),bz=Math.round(p.z);if(Math.abs(bx-camera.position.x)<.7&&Math.abs(bz-camera.position.z)<.7&&Math.abs(by-(camera.position.y-1))<1.8)return;add(bx,by,bz,selected);inventory[selected]--;refresh()}else if(h.object.position.y>-2){inventory[h.object.userData.t]=(inventory[h.object.userData.t]||0)+1;del(h.object);refresh()}}renderer.domElement.addEventListener('mousedown',e=>{if(e.pointerType==='touch'||('ontouchstart' in window&&innerWidth<=800))return;if(e.button===0)action(false);else if(e.button===2)action(true)});const mineBtn=document.getElementById('mine'),placeBtn=document.getElementById('place'),jumpBtn=document.getElementById('jump');
 function bindAction(btn,fn){btn.addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();fn()});btn.addEventListener('click',e=>{e.preventDefault();e.stopPropagation()})}
 bindAction(mineBtn,()=>action(false));bindAction(placeBtn,()=>action(true));bindAction(jumpBtn,()=>jumpQueued=true);
@@ -49,10 +49,16 @@ renderer.domElement.addEventListener('pointerup',stopLook);
 renderer.domElement.addEventListener('pointercancel',stopLook);
 function joy(el,cb){let id=null,sx=0,sy=0;el.addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();id=e.pointerId;sx=e.clientX;sy=e.clientY;el.setPointerCapture(id)});el.addEventListener('pointermove',e=>{if(e.pointerId!==id)return;e.preventDefault();e.stopPropagation();cb((e.clientX-sx)/45,(e.clientY-sy)/45)});el.addEventListener('pointerup',e=>{e.preventDefault();e.stopPropagation();id=null;cb(0,0)})}joy(document.getElementById('jl'),(x,y)=>{moveX=Math.max(-1,Math.min(1,x));moveZ=Math.max(-1,Math.min(1,y))});
 function groundY(x,z){
-  const gx=Math.round(x),gz=Math.round(z);
+  const footY=camera.position.y-1.65;
   let best=-Infinity;
+  const radius=.28;
   for(const m of blocks.values()){
-    if(m.userData.x===gx&&m.userData.z===gz&&m.position.y<=camera.position.y-.8) best=Math.max(best,m.position.y);
+    const top=m.position.y+.5;
+    // Only support blocks whose top is at/below the player's feet (+ tiny tolerance).
+    if(top>footY+.12)continue;
+    if(Math.abs(m.position.x-x)<=.5+radius&&Math.abs(m.position.z-z)<=.5+radius){
+      best=Math.max(best,m.position.y);
+    }
   }
   return Number.isFinite(best)?best+.5:null
 }
@@ -78,13 +84,17 @@ let last=performance.now(),survivalTick=0;function loop(now){requestAnimationFra
 moveHorizontal(dx,dz)
 let base=groundY(camera.position.x,camera.position.z);
 if(base===null){
-  // Do not fall through tiny gaps caused by rounding at block edges.
-  const probes=[[.32,0],[-.32,0],[0,.32],[0,-.32]];
-  for(const [px,pz] of probes){const g=groundY(camera.position.x+px,camera.position.z+pz);if(g!==null&&(base===null||g>base))base=g}
+  // Probe only beneath the player's footprint; groundY itself rejects walls above the feet.
+  const probes=[[.18,0],[-.18,0],[0,.18],[0,-.18]];
+  for(const [px,pz] of probes){
+    const g=groundY(camera.position.x+px,camera.position.z+pz);
+    if(g!==null&&(base===null||g>base))base=g
+  }
 }
 if(base!==null){
   const gy=base+1.65;
-  if(camera.position.y<=gy+.08&&vy<=0){camera.position.y=gy;vy=0;onGround=true}
+  const rise=gy-camera.position.y;
+  if(rise<=.10&&camera.position.y<=gy+.08&&vy<=0){camera.position.y=gy;vy=0;onGround=true}
   else{vy-=18*dt;camera.position.y+=vy*dt;onGround=false}
 }else{
   vy-=18*dt;camera.position.y+=vy*dt;onGround=false
